@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>詐騙數據分析工具 (網頁版)</title>
+    <title>詐騙數據分析 v1.6 (網頁版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
@@ -31,7 +31,8 @@
             <div id="file-drop-area" class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center transition-all duration-300">
                 <label for="file-upload" class="cursor-pointer">
                     <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
-                        <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        <path d="M28 8H12a4 4
+ 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
                     <span class="mt-2 block text-sm font-medium text-gray-900">選擇或拖曳 Excel 檔案到此處</span>
                     <p id="file-name" class="mt-1 text-xs text-gray-500">尚未選擇檔案</p>
@@ -242,9 +243,6 @@
         return yesterday.getDate().toString();
     }
 
-    // =================================================================
-    // vvvvvvvv  修正點：案件分析函式已更新 (防堵 null 值) vvvvvvvv
-    // =================================================================
     function generateFraudReport(data) {
         const amountColumnName = Object.keys(data[0]).find(k => k.includes('詐騙金額')) || '詐騙金額';
         const methodColumnName = Object.keys(data[0]).find(k => k.includes('詐騙手法')) || '詐騙手法';
@@ -265,10 +263,9 @@
             const maxLossCase = highValueCases.reduce((max, row) => row[amountColumnName] > max[amountColumnName] ? row : max, highValueCases[0]);
             const maxLossDetails = `最高財損${formatCurrency(maxLossCase[amountColumnName])}元${maxLossCase[methodColumnName] || 'N/A'}~案號：${maxLossCase[caseNoColumnName] || 'N/A'}、受理單位：${extractMainPoliceDept(maxLossCase[unitColumnName] || 'N/A')}`;
             
-            // 修正點：在這裡過濾掉 null 或空白的詐騙手法
             const methodCounts = highValueCases.reduce((counts, row) => {
                 const method = row[methodColumnName];
-                if (method) { // 這個判斷會過濾掉 null, undefined, 和空字串
+                if (method) { // 過濾掉 null, undefined, 和空字串
                     counts[method] = (counts[method] || 0) + 1;
                 }
                 return counts;
@@ -296,6 +293,9 @@
         return `詐騙案件總體分析報告\n${'='.repeat(40)}\n${outputPart1}\n${outputPart2}\n${outputPart3}\n${dutyReport}`;
     }
 
+    // =================================================================
+    // vvvvvvvv  修正點：電話分析函式已更新 (按日期分組) vvvvvvvv
+    // =================================================================
     function analyzePhoneNumbers(data) {
         const originalColumns = Object.keys(data[0] || {});
         const phoneCol = originalColumns.find(c => c && c.includes('詐騙電話')) || '詐騙電話';
@@ -332,12 +332,8 @@
                     else endPart = `${maxDay}日`;
                     dateString = `${startPart}至${endPart}。`;
                 }
-            } else {
-                dateWarning = `(註：在 "${dateColName}" 欄位中找不到有效的日期時間)`;
-            }
-        } else {
-            dateWarning = `(註：找不到包含 "受理時間" 的欄位)`;
-        }
+            } else { dateWarning = `(註：在 "${dateColName}" 欄位中找不到有效的日期時間)`; }
+        } else { dateWarning = `(註：找不到包含 "受理時間" 的欄位)`; }
 
         let explodedData = [];
         data.forEach(row => {
@@ -364,9 +360,7 @@
                  }
                  return true;
             });
-        } else {
-            idWarning = `(註：因缺少'${idCol}'欄位，次數未過濾重複報案)`;
-        }
+        } else { idWarning = `(註：因缺少'${idCol}'欄位，次數未過濾重複報案)`; }
 
         const phoneCounts = analysisData.reduce((counts, row) => {
             counts[row[phoneCol]] = (counts[row[phoneCol]] || 0) + 1;
@@ -382,26 +376,57 @@
             return `${titleLine} ${combinedWarning}\n${'='.repeat(40)}\n無出現3次以上之詐騙電話。`;
         }
         
+        // 修正點：建立新的、按日期分組的資料結構
+        // 結構： { "電話號碼": Map<"日期字串", Set<"案件詳情">> }
         const caseInfoMapping = explodedData.reduce((map, row) => {
             const phone = row[phoneCol];
-            if (!map[phone]) map[phone] = new Set();
-            let displayParts = [];
+            if (!map[phone]) map[phone] = new Map(); // 使用 Map 來儲存 日期 -> 案件Set
+
+            let dateStr = '無日期';
             if (dateColName && row[dateColName]) {
                 try {
                     const date = new Date(row[dateColName]);
-                    displayParts.push(isNaN(date) ? '' : date.toISOString().split('T')[0]);
+                    if (!isNaN(date)) {
+                        dateStr = date.toISOString().split('T')[0];
+                    }
                 } catch { /* ignore */ }
             }
-            displayParts.push(String(row[caseNoCol] || ''));
-            if (typeCol && originalColumns.includes(typeCol)) {
-                displayParts.push(`(${String(row[typeCol] || '無類型')})`);
+
+            if (!map[phone].has(dateStr)) {
+                map[phone].set(dateStr, new Set()); // 為這個日期建立一個新的 Set
             }
-            map[phone].add(displayParts.filter(Boolean).join(' '));
+
+            let caseDetailParts = [];
+            caseDetailParts.push(String(row[caseNoCol] || ''));
+            if (typeCol && originalColumns.includes(typeCol)) {
+                caseDetailParts.push(`(${String(row[typeCol] || '無類型')})`);
+            }
+            
+            map[phone].get(dateStr).add(caseDetailParts.filter(Boolean).join(' ')); // 把 "案件號 (類型)" 加入 Set
             return map;
         }, {});
         
+        // 修正點：重新組合報告字串
         const reportLines = highFreqPhones.sort((a, b) => b[1] - a[1]).map(([phone, count]) => {
-            const caseDetails = caseInfoMapping[phone] ? Array.from(caseInfoMapping[phone]).sort().join("、") : "無詳細資料";
+            const dateMap = caseInfoMapping[phone]; // 取得這支電話的 Map<日期, Set<案件>>
+            if (!dateMap) {
+                 return `  - 電話「${phone}」出現 ${count} 次，相關案件：無詳細資料`;
+            }
+
+            // 1. 取得所有日期並排序
+            const sortedDates = Array.from(dateMap.keys()).sort();
+
+            // 2. 為每個日期組合字串
+            const caseDetailsParts = sortedDates.map(date => {
+                const caseSet = dateMap.get(date);
+                const sortedCases = Array.from(caseSet).sort().join("、"); // 排序該日期的所有案件
+                
+                return `(${date}) ${sortedCases}`; // 組合成 "(YYYY-MM-DD) 案件1、案件2"
+            });
+            
+            // 3. 把不同日期的字串組合起來
+            const caseDetails = caseDetailsParts.join("、 "); // 用 "、 " 分隔不同日期群組
+
             return `  - 電話「${phone}」出現 ${count} 次，相關案件：${caseDetails}`;
         });
         
