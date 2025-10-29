@@ -264,7 +264,7 @@
             
             const methodCounts = highValueCases.reduce((counts, row) => {
                 const method = row[methodColumnName];
-                if (method) { 
+                if (method) { // 過濾掉 null, undefined, 和空字串
                     counts[method] = (counts[method] || 0) + 1;
                 }
                 return counts;
@@ -293,20 +293,19 @@
     }
 
     // =================================================================
-    // vvvvvvvv  修正點：電話分析函式已更新 (移除日期分組) vvvvvvvv
+    // vvvvvvvv  修正點：電話分析函式已更新 (只顯示純粹案號) vvvvvvvv
     // =================================================================
     function analyzePhoneNumbers(data) {
         const originalColumns = Object.keys(data[0] || {});
         const phoneCol = originalColumns.find(c => c && c.includes('詐騙電話')) || '詐騙電話';
         const caseNoCol = originalColumns.find(c => c && c.includes('開案編號')) || '開案編號';
         const idCol = originalColumns.find(c => c && c.includes('身分證號')) || '身分證號';
-        const typeCol = originalColumns.find(c => c && c.includes('案件類型')) || '案件類型';
+        // const typeCol = originalColumns.find(c => c && c.includes('案件類型')) || '案件類型'; // 不再需要
 
         if (!originalColumns.includes(phoneCol) || !originalColumns.includes(caseNoCol)) {
             return `檔案缺少 '${phoneCol}' 或 '${caseNoCol}' 基礎欄位。`;
         }
         
-        // 日期欄位仍用於標題
         const dateColName = originalColumns.find(c => c && c.includes('受理時間'));
         let dateString = "";
         let dateWarning = ""; 
@@ -376,36 +375,31 @@
             return `${titleLine} ${combinedWarning}\n${'='.repeat(40)}\n無出現3次以上之詐騙電話。`;
         }
         
-        // 修正點：建立一個簡單的 Set 來儲存所有案件詳情，不再依日期分組
-        // 結構： { "電話號碼": Set<"案件詳情"> }
+        // 修正點：建立一個只包含純粹案號的資料結構
+        // 結構： { "電話號碼": Set<"案號"> }
         const caseInfoMapping = explodedData.reduce((map, row) => {
             const phone = row[phoneCol];
-            if (!map[phone]) map[phone] = new Set(); // 直接使用 Set 儲存案件詳情
+            if (!map[phone]) map[phone] = new Set(); // 使用 Set 來儲存 案號
 
-            let caseDetailParts = [];
-            caseDetailParts.push(String(row[caseNoCol] || ''));
-            if (typeCol && originalColumns.includes(typeCol)) {
-                caseDetailParts.push(`(${String(row[typeCol] || '無類型')})`);
+            const caseNo = String(row[caseNoCol] || '');
+            if (caseNo) {
+                 map[phone].add(caseNo); // 只把 "案號" 加入 Set
             }
             
-            const caseDetail = caseDetailParts.filter(Boolean).join(' ');
-            if (caseDetail) { // 確保不添加空字串
-                 map[phone].add(caseDetail); // 把 "案件號 (類型)" 加入 Set
-            }
             return map;
         }, {});
         
-        // 修正點：重新組合報告字串 (不含日期)
+        // 修正點：重新組合報告字串 (只顯示案號)
         const reportLines = highFreqPhones.sort((a, b) => b[1] - a[1]).map(([phone, count]) => {
-            const caseSet = caseInfoMapping[phone]; // 取得這支電話的 Set<案件>
+            const caseSet = caseInfoMapping[phone]; // 取得這支電話的 Set<案號>
             if (!caseSet || caseSet.size === 0) {
                  return `  - 電話「${phone}」出現 ${count} 次，相關案件：無詳細資料`;
             }
 
-            // 1. 取得所有案件並排序
+            // 1. 取得所有案號並排序
             const sortedCases = Array.from(caseSet).sort();
             
-            // 2. 把所有案件字串組合起來
+            // 2. 把所有案號組合起來
             const caseDetails = sortedCases.join("、");
 
             return `  - 電話「${phone}」出現 ${count} 次，相關案件：${caseDetails}`;
