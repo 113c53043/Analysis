@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>詐騙數據分析 v1.6 (網頁版)</title>
+    <title>詐騙數據分析 v1.7 (網頁版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
@@ -31,8 +31,7 @@
             <div id="file-drop-area" class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center transition-all duration-300">
                 <label for="file-upload" class="cursor-pointer">
                     <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
-                        <path d="M28 8H12a4 4
- 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
                     <span class="mt-2 block text-sm font-medium text-gray-900">選擇或拖曳 Excel 檔案到此處</span>
                     <p id="file-name" class="mt-1 text-xs text-gray-500">尚未選擇檔案</p>
@@ -265,7 +264,7 @@
             
             const methodCounts = highValueCases.reduce((counts, row) => {
                 const method = row[methodColumnName];
-                if (method) { // 過濾掉 null, undefined, 和空字串
+                if (method) { 
                     counts[method] = (counts[method] || 0) + 1;
                 }
                 return counts;
@@ -294,7 +293,7 @@
     }
 
     // =================================================================
-    // vvvvvvvv  修正點：電話分析函式已更新 (按日期分組) vvvvvvvv
+    // vvvvvvvv  修正點：電話分析函式已更新 (移除日期分組) vvvvvvvv
     // =================================================================
     function analyzePhoneNumbers(data) {
         const originalColumns = Object.keys(data[0] || {});
@@ -307,6 +306,7 @@
             return `檔案缺少 '${phoneCol}' 或 '${caseNoCol}' 基礎欄位。`;
         }
         
+        // 日期欄位仍用於標題
         const dateColName = originalColumns.find(c => c && c.includes('受理時間'));
         let dateString = "";
         let dateWarning = ""; 
@@ -376,25 +376,11 @@
             return `${titleLine} ${combinedWarning}\n${'='.repeat(40)}\n無出現3次以上之詐騙電話。`;
         }
         
-        // 修正點：建立新的、按日期分組的資料結構
-        // 結構： { "電話號碼": Map<"日期字串", Set<"案件詳情">> }
+        // 修正點：建立一個簡單的 Set 來儲存所有案件詳情，不再依日期分組
+        // 結構： { "電話號碼": Set<"案件詳情"> }
         const caseInfoMapping = explodedData.reduce((map, row) => {
             const phone = row[phoneCol];
-            if (!map[phone]) map[phone] = new Map(); // 使用 Map 來儲存 日期 -> 案件Set
-
-            let dateStr = '無日期';
-            if (dateColName && row[dateColName]) {
-                try {
-                    const date = new Date(row[dateColName]);
-                    if (!isNaN(date)) {
-                        dateStr = date.toISOString().split('T')[0];
-                    }
-                } catch { /* ignore */ }
-            }
-
-            if (!map[phone].has(dateStr)) {
-                map[phone].set(dateStr, new Set()); // 為這個日期建立一個新的 Set
-            }
+            if (!map[phone]) map[phone] = new Set(); // 直接使用 Set 儲存案件詳情
 
             let caseDetailParts = [];
             caseDetailParts.push(String(row[caseNoCol] || ''));
@@ -402,30 +388,25 @@
                 caseDetailParts.push(`(${String(row[typeCol] || '無類型')})`);
             }
             
-            map[phone].get(dateStr).add(caseDetailParts.filter(Boolean).join(' ')); // 把 "案件號 (類型)" 加入 Set
+            const caseDetail = caseDetailParts.filter(Boolean).join(' ');
+            if (caseDetail) { // 確保不添加空字串
+                 map[phone].add(caseDetail); // 把 "案件號 (類型)" 加入 Set
+            }
             return map;
         }, {});
         
-        // 修正點：重新組合報告字串
+        // 修正點：重新組合報告字串 (不含日期)
         const reportLines = highFreqPhones.sort((a, b) => b[1] - a[1]).map(([phone, count]) => {
-            const dateMap = caseInfoMapping[phone]; // 取得這支電話的 Map<日期, Set<案件>>
-            if (!dateMap) {
+            const caseSet = caseInfoMapping[phone]; // 取得這支電話的 Set<案件>
+            if (!caseSet || caseSet.size === 0) {
                  return `  - 電話「${phone}」出現 ${count} 次，相關案件：無詳細資料`;
             }
 
-            // 1. 取得所有日期並排序
-            const sortedDates = Array.from(dateMap.keys()).sort();
-
-            // 2. 為每個日期組合字串
-            const caseDetailsParts = sortedDates.map(date => {
-                const caseSet = dateMap.get(date);
-                const sortedCases = Array.from(caseSet).sort().join("、"); // 排序該日期的所有案件
-                
-                return `(${date}) ${sortedCases}`; // 組合成 "(YYYY-MM-DD) 案件1、案件2"
-            });
+            // 1. 取得所有案件並排序
+            const sortedCases = Array.from(caseSet).sort();
             
-            // 3. 把不同日期的字串組合起來
-            const caseDetails = caseDetailsParts.join("、 "); // 用 "、 " 分隔不同日期群組
+            // 2. 把所有案件字串組合起來
+            const caseDetails = sortedCases.join("、");
 
             return `  - 電話「${phone}」出現 ${count} 次，相關案件：${caseDetails}`;
         });
